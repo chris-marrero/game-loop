@@ -2,13 +2,24 @@ use crate::*;
 
 pub use helper::*;
 
-#[cfg(all(not(target_arch = "wasm32"), not(feature="winit"), not(feature="tao")))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(feature = "winit"),
+    not(feature = "tao")
+))]
 mod helper {
     use super::*;
 
-    pub fn game_loop<G, U, R>(game: G, updates_per_second: u32, max_frame_time: f64, mut update: U, mut render: R) -> GameLoop<G, Time, ()>
-        where U: FnMut(&mut GameLoop<G, Time, ()>),
-              R: FnMut(&mut GameLoop<G, Time, ()>),
+    pub fn game_loop<G, U, R>(
+        game: G,
+        updates_per_second: u32,
+        max_frame_time: f64,
+        mut update: U,
+        mut render: R,
+    ) -> GameLoop<G, Time, ()>
+    where
+        U: FnMut(&mut GameLoop<G, Time, ()>),
+        R: FnMut(&mut GameLoop<G, Time, ()>),
     {
         let mut game_loop = GameLoop::new(game, updates_per_second, max_frame_time, ());
 
@@ -21,14 +32,20 @@ mod helper {
 #[cfg(all(target_arch = "wasm32", not(feature = "winit")))]
 mod helper {
     use super::*;
-    use web_sys::window;
-    use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+    use web_sys::window;
 
-    pub fn game_loop<G, U, R>(game: G, updates_per_second: u32, max_frame_time: f64, update: U, render: R)
-        where G: 'static,
-              U: FnMut(&mut GameLoop<G, Time, ()>) + 'static,
-              R: FnMut(&mut GameLoop<G, Time, ()>) + 'static,
+    pub fn game_loop<G, U, R>(
+        game: G,
+        updates_per_second: u32,
+        max_frame_time: f64,
+        update: U,
+        render: R,
+    ) where
+        G: 'static,
+        U: FnMut(&mut GameLoop<G, Time, ()>) + 'static,
+        R: FnMut(&mut GameLoop<G, Time, ()>) + 'static,
     {
         let game_loop = GameLoop::new(game, updates_per_second, max_frame_time, ());
 
@@ -36,9 +53,10 @@ mod helper {
     }
 
     fn animation_frame<G, U, R>(mut g: GameLoop<G, Time, ()>, mut update: U, mut render: R)
-        where G: 'static,
-              U: FnMut(&mut GameLoop<G, Time, ()>) + 'static,
-              R: FnMut(&mut GameLoop<G, Time, ()>) + 'static,
+    where
+        G: 'static,
+        U: FnMut(&mut GameLoop<G, Time, ()>) + 'static,
+        R: FnMut(&mut GameLoop<G, Time, ()>) + 'static,
     {
         if g.next_frame(&mut update, &mut render) {
             let next_frame = move || animation_frame(g, update, render);
@@ -50,66 +68,195 @@ mod helper {
     }
 }
 
-#[cfg(feature="winit")]
+#[cfg(feature = "winit")]
 mod helper {
-    use std::sync::Arc;
     use super::*;
-    use winit::event::{Event, WindowEvent};
-    use winit::event_loop::{ControlFlow, EventLoop};
+    use std::cell::OnceCell;
+    use std::sync::Arc;
+    use winit::application::ApplicationHandler;
     use winit::error::EventLoopError;
-    use winit::window::Window;
+    use winit::event::{Event, WindowEvent};
+    use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 
     pub use winit;
 
-    pub fn game_loop<G, U, R, H, T>(event_loop: EventLoop<T>, window: Arc<Window>, game: G, updates_per_second: u32, max_frame_time: f64, mut update: U, mut render: R, mut handler: H) -> Result<(), EventLoopError>
-        where G: 'static,
-              U: FnMut(&mut GameLoop<G, Time, Arc<Window>>) + 'static,
-              R: FnMut(&mut GameLoop<G, Time, Arc<Window>>) + 'static,
-              H: FnMut(&mut GameLoop<G, Time, Arc<Window>>, &Event<T>) + 'static,
-              T: 'static,
+    type Window = Arc<OnceCell<winit::window::Window>>;
+    type Loop<G> = GameLoop<G, Time, Window>;
+
+    pub trait UpdateFn<G>: FnMut(&mut Loop<G>) + 'static {}
+    impl<T, G> UpdateFn<G> for T where T: FnMut(&mut Loop<G>) + 'static {}
+
+    pub trait RenderFn<G>: FnMut(&mut Loop<G>) + 'static {}
+    impl<T, G> RenderFn<G> for T where T: FnMut(&mut Loop<G>) + 'static {}
+
+    pub trait HandlerFn<G>: FnMut(&mut Loop<G>, &Event<()>) + 'static {}
+    impl<T, G> HandlerFn<G> for T where T: FnMut(&mut Loop<G>, &Event<()>) + 'static {}
+
+    pub trait WindowInitFn<G>:
+        FnMut(&mut Loop<G>, &ActiveEventLoop) -> winit::window::Window + 'static
     {
-        let mut game_loop = GameLoop::new(game, updates_per_second, max_frame_time, window);
+    }
+    impl<T, G> WindowInitFn<G> for T where
+        T: FnMut(&mut Loop<G>, &ActiveEventLoop) -> winit::window::Window + 'static
+    {
+    }
 
-        event_loop.run(move |event, window_target| {
-            window_target.set_control_flow(ControlFlow::Poll);
+    struct App<G, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G>, W: WindowInitFn<G>> {
+        game_loop: Loop<G>,
+        window_init: W,
+        update: U,
+        render: R,
+        handler: H,
+    }
 
-            // Forward events to existing handlers.
-            handler(&mut game_loop, &event);
-
-            match event {
-                Event::AboutToWait => {
-                    game_loop.window.request_redraw();
-                },
-                Event::WindowEvent { event: WindowEvent::Occluded(occluded), .. } => {
-                    game_loop.window_occluded = occluded;
-                },
-                Event::WindowEvent { event: WindowEvent::RedrawRequested, .. } => {
-                    if !game_loop.next_frame(&mut update, &mut render) {
-                        window_target.exit();
-                    }
-                },
-                _ => {},
+    impl<G, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G>, W: WindowInitFn<G>, T: 'static>
+        ApplicationHandler<T> for App<G, U, R, H, W>
+    {
+        fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+            let window = self.game_loop.window.clone();
+            if window.get().is_none() {
+                window
+                    .set((self.window_init)(&mut self.game_loop, event_loop))
+                    .unwrap();
             }
-        })
+        }
+
+        fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+            if let Some(w) = self.game_loop.window.get() {
+                w.request_redraw();
+            }
+        }
+
+        fn window_event(
+            &mut self,
+            event_loop: &winit::event_loop::ActiveEventLoop,
+            window_id: winit::window::WindowId,
+            event: WindowEvent,
+        ) {
+            match event {
+                WindowEvent::Occluded(occluded) => self.game_loop.window_occluded = occluded,
+                WindowEvent::RedrawRequested => {
+                    if !self
+                        .game_loop
+                        .next_frame(&mut self.update, &mut self.render)
+                    {
+                        event_loop.exit();
+                    }
+                }
+                _ => {
+                    (self.handler)(
+                        &mut self.game_loop,
+                        &Event::WindowEvent { window_id, event },
+                    );
+                }
+            }
+        }
+
+        fn device_event(
+            &mut self,
+            _event_loop: &winit::event_loop::ActiveEventLoop,
+            device_id: winit::event::DeviceId,
+            event: winit::event::DeviceEvent,
+        ) {
+            (self.handler)(
+                &mut self.game_loop,
+                &Event::DeviceEvent { device_id, event },
+            );
+        }
+    }
+
+    pub fn game_loop<
+        G: 'static,
+        U: UpdateFn<G>,
+        R: RenderFn<G>,
+        H: HandlerFn<G>,
+        W: WindowInitFn<G>,
+    >(
+        event_loop: EventLoop<()>,
+        game: G,
+        updates_per_second: u32,
+        max_frame_time: f64,
+        window_init: W,
+        update: U,
+        render: R,
+        handler: H,
+    ) -> Result<(), EventLoopError>
+    where
+        G: 'static,
+    {
+        let game_loop = GameLoop::new(
+            game,
+            updates_per_second,
+            max_frame_time,
+            Arc::new(OnceCell::new()),
+        );
+        let mut app = App {
+            game_loop,
+            window_init,
+            update,
+            render,
+            handler,
+        };
+
+        event_loop.set_control_flow(ControlFlow::Poll);
+        event_loop.run_app(&mut app)
+
+        // event_loop.run(move |event, window_target| {
+        //     window_target.set_control_flow(ControlFlow::Poll);
+
+        //     // Forward events to existing handlers.
+        //     handler(&mut game_loop, &event);
+
+        //     match event {
+        //         Event::AboutToWait => {
+        //             game_loop.window.request_redraw();
+        //         }
+        //         Event::WindowEvent {
+        //             event: WindowEvent::Occluded(occluded),
+        //             ..
+        //         } => {
+        //             game_loop.window_occluded = occluded;
+        //         }
+        //         Event::WindowEvent {
+        //             event: WindowEvent::RedrawRequested,
+        //             ..
+        //         } => {
+        //             if !game_loop.next_frame(&mut update, &mut render) {
+        //                 window_target.exit();
+        //             }
+        //         }
+        //         _ => {}
+        //     }
+        // })
     }
 }
 
 #[cfg(feature = "tao")]
 mod helper {
     use super::*;
+    use std::sync::Arc;
     use tao::event::Event;
     use tao::event_loop::{ControlFlow, EventLoop};
     use tao::window::Window;
-    use std::sync::Arc;
 
     pub use tao;
 
-    pub fn game_loop<G, U, R, H, T>(event_loop: EventLoop<T>, window: Arc<Window>, game: G, updates_per_second: u32, max_frame_time: f64, mut update: U, mut render: R, mut handler: H) -> !
-        where G: 'static,
-              U: FnMut(&mut GameLoop<G, Time, Arc<Window>>) + 'static,
-              R: FnMut(&mut GameLoop<G, Time, Arc<Window>>) + 'static,
-              H: FnMut(&mut GameLoop<G, Time, Arc<Window>>, &Event<'_, T>) + 'static,
-              T: 'static,
+    pub fn game_loop<G, U, R, H, T>(
+        event_loop: EventLoop<T>,
+        window: Arc<Window>,
+        game: G,
+        updates_per_second: u32,
+        max_frame_time: f64,
+        mut update: U,
+        mut render: R,
+        mut handler: H,
+    ) -> !
+    where
+        G: 'static,
+        U: FnMut(&mut GameLoop<G, Time, Arc<Window>>) + 'static,
+        R: FnMut(&mut GameLoop<G, Time, Arc<Window>>) + 'static,
+        H: FnMut(&mut GameLoop<G, Time, Arc<Window>>, &Event<'_, T>) + 'static,
+        T: 'static,
     {
         let mut game_loop = GameLoop::new(game, updates_per_second, max_frame_time, window);
 
@@ -124,11 +271,11 @@ mod helper {
                     if !game_loop.next_frame(&mut update, &mut render) {
                         *control_flow = ControlFlow::Exit;
                     }
-                },
+                }
                 Event::MainEventsCleared => {
                     game_loop.window.request_redraw();
-                },
-                _ => {},
+                }
+                _ => {}
             }
         })
     }

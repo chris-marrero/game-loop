@@ -1,4 +1,4 @@
-pub trait TimeTrait : Copy {
+pub trait TimeTrait: Copy {
     fn now() -> Self;
     fn sub(&self, other: &Self) -> f64;
     fn supports_sleep() -> bool;
@@ -10,8 +10,8 @@ pub use time::*;
 #[cfg(not(target_arch = "wasm32"))]
 mod time {
     use super::*;
-    use std::time::{Instant, Duration};
     use std::thread::sleep;
+    use std::time::{Duration, Instant};
 
     #[derive(Copy, Clone)]
     pub struct Time(Instant);

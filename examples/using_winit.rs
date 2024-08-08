@@ -10,19 +10,29 @@ use std::sync::Arc;
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
-
-    let window = event_loop.create_window(Window::default_attributes()).unwrap();
-    let window = Arc::new(window);
-
     let game = Game::new();
 
-    game_loop(event_loop, window, game, 240, 0.1, |g| {
-        g.game.your_update_function();
-    }, |g| {
-        g.game.your_render_function(&g.window);
-    }, |g, event| {
-        if !g.game.your_window_handler(event) { g.exit(); }
-    }).unwrap();
+    game_loop(
+        event_loop,
+        game,
+        240,
+        0.1,
+        |_, e| e.create_window(Default::default()).unwrap(),
+        |g| {
+            g.game.your_update_function();
+        },
+        |g| {
+            if let Some(window) = g.window.get() {
+                g.game.your_render_function(window);
+            }
+        },
+        |g, event| {
+            if !g.game.your_window_handler(event) {
+                g.exit();
+            }
+        },
+    )
+    .unwrap();
 }
 
 #[derive(Default)]
@@ -42,7 +52,10 @@ impl Game {
 
     pub fn your_render_function(&mut self, window: &Window) {
         self.num_renders += 1;
-        window.set_title(&format!("num_updates: {}, num_renders: {}", self.num_updates, self.num_renders));
+        window.set_title(&format!(
+            "num_updates: {}, num_renders: {}",
+            self.num_updates, self.num_renders
+        ));
     }
 
     // A very simple handler that returns false when CloseRequested is detected.
@@ -51,10 +64,10 @@ impl Game {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => {
                     return false;
-                },
-                _ => {},
+                }
+                _ => {}
             },
-            _ => {},
+            _ => {}
         }
 
         true
