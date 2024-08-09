@@ -174,14 +174,8 @@ mod helper {
     where
         G: 'static,
     {
-        let game_loop = GameLoop::new(
-            game,
-            updates_per_second,
-            max_frame_time,
-            Arc::new(OnceCell::new()),
-        );
         let mut app = App {
-            game_loop,
+            game_loop: GameLoop::new(game, updates_per_second, max_frame_time, Default::default()),
             init,
             update,
             render,
@@ -190,34 +184,6 @@ mod helper {
 
         event_loop.set_control_flow(ControlFlow::Poll);
         event_loop.run_app(&mut app)
-
-        // event_loop.run(move |event, window_target| {
-        //     window_target.set_control_flow(ControlFlow::Poll);
-
-        //     // Forward events to existing handlers.
-        //     handler(&mut game_loop, &event);
-
-        //     match event {
-        //         Event::AboutToWait => {
-        //             game_loop.window.request_redraw();
-        //         }
-        //         Event::WindowEvent {
-        //             event: WindowEvent::Occluded(occluded),
-        //             ..
-        //         } => {
-        //             game_loop.window_occluded = occluded;
-        //         }
-        //         Event::WindowEvent {
-        //             event: WindowEvent::RedrawRequested,
-        //             ..
-        //         } => {
-        //             if !game_loop.next_frame(&mut update, &mut render) {
-        //                 window_target.exit();
-        //             }
-        //         }
-        //         _ => {}
-        //     }
-        // })
     }
 }
 
