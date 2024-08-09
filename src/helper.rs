@@ -73,15 +73,17 @@ mod helper {
     use super::*;
     use std::cell::OnceCell;
     use std::sync::Arc;
-    use winit::application::ApplicationHandler;
-    use winit::error::EventLoopError;
-    use winit::event::{Event, WindowEvent};
-    use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 
     pub use winit;
+    use winit::{
+        application::ApplicationHandler,
+        error::EventLoopError,
+        event::{DeviceEvent, DeviceId, Event, WindowEvent},
+        event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+        window::{Window, WindowId},
+    };
 
-    type Window = Arc<OnceCell<winit::window::Window>>;
-    type Loop<G> = GameLoop<G, Time, Window>;
+    type Loop<G> = GameLoop<G, Time, Arc<OnceCell<Window>>>;
 
     pub trait UpdateFn<G>: FnMut(&mut Loop<G>) + 'static {}
     impl<T, G> UpdateFn<G> for T where T: FnMut(&mut Loop<G>) + 'static {}
@@ -92,36 +94,30 @@ mod helper {
     pub trait HandlerFn<G>: FnMut(&mut Loop<G>, &Event<()>) + 'static {}
     impl<T, G> HandlerFn<G> for T where T: FnMut(&mut Loop<G>, &Event<()>) + 'static {}
 
-    pub trait WindowInitFn<G>:
-        FnMut(&mut Loop<G>, &ActiveEventLoop) -> winit::window::Window + 'static
-    {
-    }
-    impl<T, G> WindowInitFn<G> for T where
-        T: FnMut(&mut Loop<G>, &ActiveEventLoop) -> winit::window::Window + 'static
-    {
-    }
+    pub trait InitFn<G>: FnMut(&mut Loop<G>, &ActiveEventLoop) -> Window + 'static {}
+    impl<T, G> InitFn<G> for T where T: FnMut(&mut Loop<G>, &ActiveEventLoop) -> Window + 'static {}
 
-    struct App<G, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G>, W: WindowInitFn<G>> {
+    struct App<G, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G>, I: InitFn<G>> {
         game_loop: Loop<G>,
-        window_init: W,
+        init: I,
         update: U,
         render: R,
         handler: H,
     }
 
-    impl<G, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G>, W: WindowInitFn<G>, T: 'static>
-        ApplicationHandler<T> for App<G, U, R, H, W>
+    impl<G, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G>, I: InitFn<G>, T: 'static>
+        ApplicationHandler<T> for App<G, U, R, H, I>
     {
-        fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             let window = self.game_loop.window.clone();
             if window.get().is_none() {
                 window
-                    .set((self.window_init)(&mut self.game_loop, event_loop))
+                    .set((self.init)(&mut self.game_loop, event_loop))
                     .unwrap();
             }
         }
 
-        fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
             if let Some(w) = self.game_loop.window.get() {
                 w.request_redraw();
             }
@@ -129,8 +125,8 @@ mod helper {
 
         fn window_event(
             &mut self,
-            event_loop: &winit::event_loop::ActiveEventLoop,
-            window_id: winit::window::WindowId,
+            event_loop: &ActiveEventLoop,
+            window_id: WindowId,
             event: WindowEvent,
         ) {
             match event {
@@ -154,9 +150,9 @@ mod helper {
 
         fn device_event(
             &mut self,
-            _event_loop: &winit::event_loop::ActiveEventLoop,
-            device_id: winit::event::DeviceId,
-            event: winit::event::DeviceEvent,
+            _event_loop: &ActiveEventLoop,
+            device_id: DeviceId,
+            event: DeviceEvent,
         ) {
             (self.handler)(
                 &mut self.game_loop,
@@ -165,18 +161,12 @@ mod helper {
         }
     }
 
-    pub fn game_loop<
-        G: 'static,
-        U: UpdateFn<G>,
-        R: RenderFn<G>,
-        H: HandlerFn<G>,
-        W: WindowInitFn<G>,
-    >(
+    pub fn game_loop<G: 'static, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G>, I: InitFn<G>>(
         event_loop: EventLoop<()>,
         game: G,
         updates_per_second: u32,
         max_frame_time: f64,
-        window_init: W,
+        init: I,
         update: U,
         render: R,
         handler: H,
@@ -192,7 +182,7 @@ mod helper {
         );
         let mut app = App {
             game_loop,
-            window_init,
+            init,
             update,
             render,
             handler,
