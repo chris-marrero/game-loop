@@ -71,8 +71,8 @@ mod helper {
 #[cfg(feature = "winit")]
 mod helper {
     use super::*;
-    use std::cell::OnceCell;
     use std::sync::Arc;
+    use std::{cell::OnceCell, marker::PhantomData};
 
     pub use winit;
     use winit::{
@@ -91,22 +91,31 @@ mod helper {
     pub trait RenderFn<G>: FnMut(&mut Loop<G>) + 'static {}
     impl<T, G> RenderFn<G> for T where T: FnMut(&mut Loop<G>) + 'static {}
 
-    pub trait HandlerFn<G>: FnMut(&mut Loop<G>, &Event<()>) + 'static {}
-    impl<T, G> HandlerFn<G> for T where T: FnMut(&mut Loop<G>, &Event<()>) + 'static {}
+    pub trait HandlerFn<G, E>: FnMut(&mut Loop<G>, &Event<E>) + 'static {}
+    impl<T, G, E> HandlerFn<G, E> for T where T: FnMut(&mut Loop<G>, &Event<E>) + 'static {}
 
     pub trait InitFn<G>: FnMut(&mut Loop<G>, &ActiveEventLoop) -> Window + 'static {}
     impl<T, G> InitFn<G> for T where T: FnMut(&mut Loop<G>, &ActiveEventLoop) -> Window + 'static {}
 
-    struct App<G, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G>, I: InitFn<G>> {
+    struct App<G, E, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G, E>, I: InitFn<G>> {
         game_loop: Loop<G>,
         init: I,
         update: U,
         render: R,
         handler: H,
+
+        user_event: PhantomData<E>,
     }
 
-    impl<G, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G>, I: InitFn<G>, T: 'static>
-        ApplicationHandler<T> for App<G, U, R, H, I>
+    impl<
+            G: 'static,
+            E: 'static,
+            U: UpdateFn<G>,
+            R: RenderFn<G>,
+            H: HandlerFn<G, E>,
+            I: InitFn<G>,
+            T: 'static,
+        > ApplicationHandler<T> for App<G, E, U, R, H, I>
     {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             let window = self.game_loop.window.clone();
@@ -161,8 +170,15 @@ mod helper {
         }
     }
 
-    pub fn game_loop<G: 'static, U: UpdateFn<G>, R: RenderFn<G>, H: HandlerFn<G>, I: InitFn<G>>(
-        event_loop: EventLoop<()>,
+    pub fn game_loop<
+        G: 'static,
+        E: 'static,
+        U: UpdateFn<G>,
+        R: RenderFn<G>,
+        H: HandlerFn<G, E>,
+        I: InitFn<G>,
+    >(
+        event_loop: EventLoop<E>,
         game: G,
         updates_per_second: u32,
         max_frame_time: f64,
@@ -180,6 +196,8 @@ mod helper {
             update,
             render,
             handler,
+
+            user_event: PhantomData,
         };
 
         event_loop.set_control_flow(ControlFlow::Poll);

@@ -5,11 +5,12 @@ use game_loop::game_loop;
 
 use game_loop::winit::event::{Event, WindowEvent};
 use game_loop::winit::event_loop::EventLoop;
-use game_loop::winit::window::{Window, WindowAttributes};
-use std::sync::Arc;
+use game_loop::winit::window::Window;
+
+struct UserEvent;
 
 fn main() {
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
     let game = Game::new();
 
     game_loop(
@@ -59,7 +60,7 @@ impl Game {
     }
 
     // A very simple handler that returns false when CloseRequested is detected.
-    pub fn your_window_handler(&self, event: &Event<()>) -> bool {
+    pub fn your_window_handler(&self, event: &Event<UserEvent>) -> bool {
         match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => {
